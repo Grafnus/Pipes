@@ -407,13 +407,13 @@ public class PipesUtil {
 
             if (restSize > 0) {
                 ItemStack remove = new ItemStack(added);
-                remove.setAmount(remaining);
-                source.removeItem(remove);
+                //remove.setAmount(remaining);
+                //source.removeItem(remove);
                 added.setAmount(restSize);
 
                 current.setAmount(current.getMaxStackSize());
             } else {
-                source.removeItem(new ItemStack(added));
+                //source.removeItem(new ItemStack(added));
 
                 current.setAmount(current.getAmount() + added.getAmount());
 

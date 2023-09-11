@@ -26,6 +26,7 @@ import org.bukkit.block.Container;
 import org.bukkit.block.data.Levelled;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Item;
+import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.inventory.BrewerInventory;
 import org.bukkit.inventory.FurnaceInventory;
 import org.bukkit.inventory.Inventory;
