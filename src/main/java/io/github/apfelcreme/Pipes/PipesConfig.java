@@ -1,13 +1,14 @@
 package io.github.apfelcreme.Pipes;
 
+import de.themoep.utils.lang.LanguageConfig;
+import de.themoep.utils.lang.bukkit.LanguageManager;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
+import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.ConfigurationSection;
-import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 
-import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.logging.Level;
@@ -32,7 +33,7 @@ import java.util.logging.Level;
  */
 public class PipesConfig {
 
-    private static YamlConfiguration languageConfig;
+    private static LanguageManager languageManager;
 
     private static Pipes plugin;
     private static long transferCooldown;
@@ -54,7 +55,6 @@ public class PipesConfig {
             plugin.getDataFolder().mkdirs();
         }
         plugin.saveDefaultConfig();
-        plugin.saveResource("lang.de.yml", false);
         plugin.reloadConfig();
         transferCooldown = plugin.getConfig().getLong("transferCooldown");
         transferCount = plugin.getConfig().getInt("transferCount");
@@ -63,8 +63,18 @@ public class PipesConfig {
         maxPipeLength = plugin.getConfig().getInt("maxPipeLength");
         pistonUpdateCheck = plugin.getConfig().getBoolean("pistonUpdateCheck");
         custommodelDataOffset = plugin.getConfig().getInt("custommodelDataOffset");
-        languageConfig = YamlConfiguration.loadConfiguration(new File(plugin.getDataFolder(), "lang.de.yml"));
+        languageManager = new LanguageManager(plugin, getDefaultLocale());
+        languageManager.loadConfigs();
         itemStacks = new HashMap<>();
+    }
+
+    /**
+     * returns the configured default locale
+     *
+     * @return the default locale
+     */
+    public static String getDefaultLocale() {
+        return plugin.getConfig().getString("defaultLocale");
     }
 
     /**
@@ -168,12 +178,37 @@ public class PipesConfig {
     /**
      * returns a texty string
      *
-     * @param key           the config path
-     * @param replacements  the replacements as an array of alternating placeholder and value
+     * @param sender       the sender to get the locale for
+     * @param key          the config path
+     * @param replacements the replacements as an array of alternating placeholder and value
      * @return the text
      */
-    public static String getText(String key, String... replacements) {
-        String ret = (String) languageConfig.get("texts." + key);
+    public static String getText(CommandSender sender, String key, String... replacements) {
+        return getText(languageManager.getConfig(sender), key, replacements);
+    }
+
+    /**
+     * returns a texty string
+     *
+     * @param locale       the locale to use
+     * @param key          the config path
+     * @param replacements the replacements as an array of alternating placeholder and value
+     * @return the text
+     */
+    public static String getText(String locale, String key, String... replacements) {
+        return getText(languageManager.getConfig(locale), key, replacements);
+    }
+
+    /**
+     * returns a texty string
+     *
+     * @param config       the config to use
+     * @param key          the config path
+     * @param replacements the replacements as an array of alternating placeholder and value
+     * @return the text
+     */
+    private static String getText(LanguageConfig<?> config, String key, String... replacements) {
+        String ret = config.get("texts." + key);
         if (ret != null && !ret.isEmpty()) {
             for (int i = 0; i < replacements.length; i++) {
                 ret = ret.replace("{" + i + "}", replacements[i]);
@@ -223,24 +258,25 @@ public class PipesConfig {
             String[] parts = input.split(":");
             try {
                 Material mat = Material.valueOf(parts[0].toUpperCase());
-                byte data = 0;
+                ItemStack item = new ItemStack(mat);
                 if (parts.length > 1) {
-                    data = Byte.parseByte(parts[1]);
+                    int data = Integer.parseInt(parts[1]);
+                    if (data != 0) {
+                        item.editMeta(meta -> meta.setCustomModelData(data));
+                    }
                 }
-                ItemStack item = new ItemStack(mat, 1, data);
                 itemStacks.put(key, item);
                 return item;
             } catch (NumberFormatException e) {
-                error = parts[1] + " is not a valid Byte!";
+                error = parts[1] + " is not a valid Integer!";
             } catch (IllegalArgumentException e) {
                 error = parts[0].toUpperCase() + " is not a valid Material name!";
             }
         }
         plugin.getLogger().log(Level.WARNING, error);
         ItemStack item = new ItemStack(Material.BARRIER);
-        ItemMeta meta = item.getItemMeta();
-        meta.setDisplayName(ChatColor.RED + error);
-        item.setItemMeta(meta);
+        String finalError = error;
+        item.editMeta(meta -> meta.setDisplayName(ChatColor.RED + finalError));
         itemStacks.put(key, item);
         return item;
     }
