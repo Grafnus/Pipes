@@ -1,18 +1,23 @@
 package io.github.apfelcreme.Pipes.Pipe;
 
 import io.github.apfelcreme.Pipes.PipesItem;
+import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.BlockState;
+import org.bukkit.block.data.Directional;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.minecart.HopperMinecart;
+import org.bukkit.entity.minecart.StorageMinecart;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
-import org.bukkit.material.Directional;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.bukkit.util.BoundingBox;
 
 /*
  * Copyright (C) 2016 Lord36 aka Apfelcreme
@@ -45,7 +50,7 @@ public class PipeOutput extends AbstractPipePart {
 
     public PipeOutput(BlockState state) {
         super(PipesItem.PIPE_OUTPUT, state.getLocation());
-        this.facing = ((Directional) state.getData()).getFacing();
+        this.facing = ((Directional) state.getBlockData()).getFacing();
     }
 
     /**
@@ -55,9 +60,26 @@ public class PipeOutput extends AbstractPipePart {
      */
     public InventoryHolder getTargetHolder() {
         Block block = getTargetLocation().getBlock();
-        BlockState state = block != null ? block.getState(false) : null;
-        if (state != null && state instanceof InventoryHolder) {
+
+        if (block == null) {
+            return null; // The world isn't loaded
+        }
+
+        BlockState state = block.getState(false);
+        if (state instanceof InventoryHolder) {
             return (InventoryHolder) state;
+        }
+
+        if (!block.isSolid()) {
+            // Perform an entity search for container minecarts
+            BoundingBox box = block.getBoundingBox();
+            World world = block.getWorld();
+
+            for (Entity entity : world.getNearbyEntities(box)) {
+                if (entity instanceof InventoryHolder && isAcceptedEntity(entity)) { // Minecarts and similar entities inherit InventoryHolder
+                    return (InventoryHolder) entity;
+                }
+            }
         }
         return null;
     }
@@ -97,19 +119,19 @@ public class PipeOutput extends AbstractPipePart {
      */
     public AcceptResult accepts(PipeInput input, ItemStack itemStack) {
         Block block = getLocation().getBlock();
-        BlockState state = block != null ? block.getState(false) : null;
-        if (state == null || !(state instanceof InventoryHolder)) {
+        if (block == null || block.getType() != PipesItem.PIPE_OUTPUT.getMaterial()) {
             return new AcceptResult(ResultType.DENY_INVALID, null);
         }
         Options.Overflow outputOverflow = getOption(Options.OVERFLOW);
         if ((outputOverflow == Options.Overflow.TRUE || outputOverflow == Options.Overflow.INPUT && input.getOption(PipeInput.Options.OVERFLOW))
-                && block.isBlockPowered()) {
+                && getOption(Options.REDSTONE) && block.isBlockPowered()) {
             return new AcceptResult(ResultType.DENY_REDSTONE, null);
         }
 
         ItemStack filter = null;
         boolean isEmpty = true;
         boolean isWhitelist = getOption(Options.WHITELIST);
+        BlockState state = block.getState(false);
         for (ItemStack filterItem : ((InventoryHolder) state).getInventory().getContents()) {
             isEmpty &= filterItem == null;
             if (matchesFilter(filterItem, itemStack)) {
@@ -122,7 +144,7 @@ public class PipeOutput extends AbstractPipePart {
             }
         }
 
-        if (block.isBlockPowered()) {
+        if (getOption(Options.REDSTONE) && block.isBlockPowered()) {
             return new AcceptResult(ResultType.DENY_REDSTONE, filter);
         } else if (!isEmpty && isWhitelist && filter == null) {
             return new AcceptResult(ResultType.DENY_WHITELIST, null);
@@ -192,6 +214,10 @@ public class PipeOutput extends AbstractPipePart {
         }
 
         return true;
+    }
+
+    private boolean isAcceptedEntity(Entity entity) {
+        return entity instanceof StorageMinecart || entity instanceof HopperMinecart;
     }
 
     @Override
@@ -322,6 +348,11 @@ public class PipeOutput extends AbstractPipePart {
          * Whether or not to drop the item instead of adding to an inventory
          */
         public static final Option<Boolean> DROP = add(new Option<>("DROP", Option.GuiPosition.LEFT, Value.FALSE, Value.TRUE));
+
+        /**
+         * Whether or not to disable this output when a redstone signal is applied
+         */
+        public static final Option<Boolean> REDSTONE = add(new Option<>("REDSTONE", Option.GuiPosition.LEFT, Value.FALSE, Value.TRUE));
 
         protected static <T> Option<T> add(Option<T> option) {
             VALUES.put(option.name().toLowerCase(), option);

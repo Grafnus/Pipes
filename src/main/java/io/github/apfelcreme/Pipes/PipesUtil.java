@@ -1,18 +1,16 @@
 package io.github.apfelcreme.Pipes;
 
-import com.destroystokyo.paper.MaterialTags;
 import de.minebench.blockinfostorage.BlockInfoStorage;
 import io.github.apfelcreme.Pipes.Pipe.AbstractPipePart;
 import io.github.apfelcreme.Pipes.Pipe.ChunkLoader;
 import io.github.apfelcreme.Pipes.Pipe.PipeInput;
 import io.github.apfelcreme.Pipes.Pipe.PipeOutput;
-import org.bukkit.ChatColor;
 import org.bukkit.Material;
-import org.bukkit.Tag;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.BlockState;
 import org.bukkit.block.Container;
+import org.bukkit.block.Crafter;
 import org.bukkit.inventory.BrewerInventory;
 import org.bukkit.inventory.FurnaceInventory;
 import org.bukkit.inventory.Inventory;
@@ -78,45 +76,6 @@ public class PipesUtil {
     }
 
     /**
-     * Hide a string inside another string with chat color characters
-     *
-     * @param hidden The string to hide
-     * @param string The string to hide in
-     * @return The string with the hidden string appended
-     */
-    public static String hideString(String hidden, String string) {
-        while (string.length() > 1 && string.charAt(string.length() - 2) == ChatColor.COLOR_CHAR) {
-            string = string.substring(0, string.length() - 2);
-        }
-        // Add hidden string
-        char[] chars = new char[hidden.length() * 2];
-        for (int i = 0; i < hidden.length(); i++) {
-            chars[i * 2] = ChatColor.COLOR_CHAR;
-            chars[i * 2 + 1] = hidden.charAt(i);
-        }
-        return string + new String(chars);
-    }
-
-    /**
-     * Returns a hidden string in the itemstack which is hidden using the last lore line
-     * @param string The string to search in for a hidden string
-     * @return The hidden string or <code>null</code> if there is none or the input is null
-     */
-    public static String getHiddenString(String string) {
-        if (string == null) {
-            return null;
-        }
-        // Only the color chars at the end of the string is it
-        StringBuilder builder = new StringBuilder();
-        for (int i = string.length() - 1; i > 0 && string.charAt(i - 1) == ChatColor.COLOR_CHAR; i -= 2) {
-            builder.append(string.charAt(i));
-        }
-        if (builder.length() == 0)
-            return null;
-        return builder.reverse().toString();
-    }
-
-    /**
      * Get the {@link PipesItem} from an ItemStack
      * @param item  the ItemStack
      * @return the PipesItem or null if none found
@@ -129,13 +88,6 @@ public class PipesUtil {
         String type = null;
         if (item.getItemMeta().getPersistentDataContainer().has(AbstractPipePart.TYPE_KEY, PersistentDataType.STRING)) {
             type = item.getItemMeta().getPersistentDataContainer().get(AbstractPipePart.TYPE_KEY, PersistentDataType.STRING);
-        } else if (item.getItemMeta().hasLore() && !item.getItemMeta().getLore().isEmpty()) {
-            List<String> lore = item.getItemMeta().getLore();
-            if (!lore.get(lore.size() - 1).contains(PipesItem.getIdentifier())) {
-                return null;
-            }
-
-            type = getHiddenString(lore.get(lore.size() - 1));
         }
 
         if (type == null || type.isEmpty()) {
@@ -188,14 +140,7 @@ public class PipesUtil {
         }
 
         if (type == null) {
-            type = getHiddenString(((Container) state).getCustomName());
-            if (type == null) {
-                return null;
-            }
-            type = type.split(",")[0];
-            if (type.isEmpty()) {
-                return null;
-            }
+            return null;
         }
 
         try {
@@ -304,7 +249,7 @@ public class PipesUtil {
             return false;
         if (a == b)
             return true;
-        return a.getType() == b.getType() && a.getData().equals(b.getData());
+        return a.getType() == b.getType();
     }
 
     /**
@@ -358,6 +303,44 @@ public class PipesUtil {
             newAmount += item.getAmount();
         }
         itemStack.setAmount(newAmount);
+    }
+
+    /**
+     * Add an item to the inventory of a crafter. This respects the disabled slots and prefers adding items into empty slots before merging them.
+     * @param crafter The crafter to add the item to
+     * @param target Where to move the item to
+     * @param itemStack The item stack
+     */
+    public static void addCrafterItem(Crafter crafter, Inventory target, ItemStack itemStack) {
+        int emptySlot = -1;
+        int matchingSlot = -1;
+        ItemStack[] content = target.getStorageContents();
+        for (int i = 0; i < content.length; i++) {
+            if (!crafter.isSlotDisabled(i)) {
+                if (content[i] == null || content[i].isEmpty()) {
+                    emptySlot = i;
+                } else if (content[i].isSimilar(itemStack) && content[i].getAmount() < content[i].getMaxStackSize()) {
+                    matchingSlot = i;
+                }
+            }
+        }
+
+        if (emptySlot > -1) {
+            ItemStack addedItemStack = itemStack.clone();
+            itemStack.setAmount(0);
+            target.setItem(emptySlot, addedItemStack);
+        } else if (matchingSlot > -1) {
+            ItemStack slotItem = content[matchingSlot];
+            int toAdd = slotItem.getMaxStackSize() - slotItem.getAmount();
+            if (toAdd > itemStack.getAmount()) {
+                int itemStackAmount = itemStack.getAmount();
+                itemStack.setAmount(0);
+                slotItem.setAmount(slotItem.getAmount() + itemStackAmount);
+            } else {
+                itemStack.setAmount(itemStack.getAmount() - toAdd);
+                slotItem.setAmount(slotItem.getAmount() + toAdd);
+            }
+        }
     }
 
     /**
@@ -450,7 +433,7 @@ public class PipesUtil {
         }
 
         PotionMeta meta = (PotionMeta) itemStack.getItemMeta();
-        PotionType type = meta.getBasePotionData().getType();
+        PotionType type = meta.getBasePotionType();
 
         if (type == PotionType.MUNDANE || type == PotionType.THICK) {
             return false;
@@ -459,16 +442,17 @@ public class PipesUtil {
             case NETHER_WART:
                 return type == PotionType.WATER;
             case REDSTONE:
+                return type.isExtendable();
             case GLOWSTONE_DUST:
-                return meta.getBasePotionData().isUpgraded() || meta.getBasePotionData().isExtended();
+                return type.isUpgradeable();
             case FERMENTED_SPIDER_EYE:
                 // List of potions that can be corrupted
                 switch (type) {
                     case WATER:
                     case POISON:
-                    case INSTANT_HEAL:
-                    case SPEED:
-                    case JUMP:
+                    case HEALING:
+                    case SWIFTNESS:
+                    case LEAPING:
                     case NIGHT_VISION:
                     case SLOW_FALLING:
                     case TURTLE_MASTER:
@@ -487,6 +471,10 @@ public class PipesUtil {
             case GOLDEN_CARROT:
             case TURTLE_HELMET:
             case PHANTOM_MEMBRANE:
+            case BREEZE_ROD:
+            case COBWEB:
+            case SLIME_BLOCK:
+            case STONE:
                 return type == PotionType.AWKWARD;
         }
         return false;
@@ -508,85 +496,5 @@ public class PipesUtil {
             }
         }
         return amount;
-    }
-
-    /**
-     * Gets the chance that a compostable item has to fill a layer
-     * @param type  The item type
-     * @return      The chance, 0 if it isn't compostable
-     */
-    public static double getCompostableChance(Material type) {
-        switch (type) {
-            case BEETROOT_SEEDS:
-            case DRIED_KELP:
-            case GRASS:
-            case KELP:
-            case MELON_SEEDS:
-            case PUMPKIN_SEEDS:
-            case SEAGRASS:
-            case SWEET_BERRIES:
-            case GLOW_BERRIES:
-            case WHEAT_SEEDS:
-            case MOSS_CARPET:
-            case SMALL_DRIPLEAF:
-            case HANGING_ROOTS:
-                return 0.3;
-            case DRIED_KELP_BLOCK:
-            case TALL_GRASS:
-            case FLOWERING_AZALEA_LEAVES:
-            case CACTUS:
-            case SUGAR_CANE:
-            case VINE:
-            case NETHER_SPROUTS:
-            case WEEPING_VINES:
-            case TWISTING_VINES:
-            case MELON_SLICE:
-            case GLOW_LICHEN:
-                return 0.5;
-            case SEA_PICKLE:
-            case LILY_PAD:
-            case PUMPKIN:
-            case CARVED_PUMPKIN:
-            case MELON:
-            case APPLE:
-            case BEETROOT:
-            case CARROT:
-            case COCOA_BEANS:
-            case POTATO:
-            case WHEAT:
-            case MUSHROOM_STEM:
-            case CRIMSON_FUNGUS:
-            case WARPED_FUNGUS:
-            case NETHER_WART:
-            case CRIMSON_ROOTS:
-            case WARPED_ROOTS:
-            case SHROOMLIGHT:
-            case FERN:
-            case ROSE_BUSH:
-            case LARGE_FERN:
-            case SPORE_BLOSSOM:
-            case MOSS_BLOCK:
-            case BIG_DRIPLEAF:
-                return 0.65;
-            case HAY_BLOCK:
-            case FLOWERING_AZALEA:
-            case NETHER_WART_BLOCK:
-            case WARPED_WART_BLOCK:
-            case BREAD:
-            case BAKED_POTATO:
-            case COOKIE:
-                return 0.85;
-            case CAKE:
-            case PUMPKIN_PIE:
-                return 1;
-        }
-        if (Tag.LEAVES.isTagged(type) || Tag.SAPLINGS.isTagged(type)) {
-            return 0.3;
-        } else if (Tag.FLOWERS.isTagged(type) || MaterialTags.MUSHROOMS.isTagged(type)) {
-            return 0.65;
-        } else if (MaterialTags.MUSHROOM_BLOCKS.isTagged(type)) {
-            return 0.85;
-        }
-        return 0;
     }
 }

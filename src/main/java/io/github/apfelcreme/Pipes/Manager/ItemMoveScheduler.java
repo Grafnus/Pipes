@@ -1,7 +1,6 @@
 package io.github.apfelcreme.Pipes.Manager;
 
-import co.aikar.timings.Timing;
-import co.aikar.timings.Timings;
+import co.aikar.timings.lib.MCTiming;
 import io.github.apfelcreme.Pipes.Event.PipeDispenseEvent;
 import io.github.apfelcreme.Pipes.Event.PipeMoveItemEvent;
 import io.github.apfelcreme.Pipes.Exception.ChunkNotLoadedException;
@@ -23,6 +22,7 @@ import org.bukkit.Tag;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.Container;
+import org.bukkit.block.Crafter;
 import org.bukkit.block.data.Levelled;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Item;
@@ -67,9 +67,9 @@ import java.util.stream.Collectors;
  */
 public class ItemMoveScheduler {
 
-    private final Timing TIMINGS_MOVE_FILTER;
-    private final Timing TIMINGS_MOVE_TRANSFER;
-    private final Timing TIMINGS_MOVE_FILTER_AMOUNT;
+    private final MCTiming TIMINGS_MOVE_FILTER;
+    private final MCTiming TIMINGS_MOVE_TRANSFER;
+    private final MCTiming TIMINGS_MOVE_FILTER_AMOUNT;
 
     /**
      * the task id of the repeating task
@@ -107,10 +107,10 @@ public class ItemMoveScheduler {
         addItemTransfers = new LinkedHashSet<>();
         emptyRuns = 0;
 
-        Timing timingsMove = Timings.of(Pipes.getInstance(), "move");
-        TIMINGS_MOVE_FILTER = Timings.of(Pipes.getInstance(), "## filter", timingsMove);
-        TIMINGS_MOVE_TRANSFER = Timings.of(Pipes.getInstance(), "## transfer", timingsMove);
-        TIMINGS_MOVE_FILTER_AMOUNT = Timings.of(Pipes.getInstance(), "## filter_amount", timingsMove);
+        MCTiming timingsMove = Pipes.getTiming("move");
+        TIMINGS_MOVE_FILTER = Pipes.getTiming("## filter", timingsMove);
+        TIMINGS_MOVE_TRANSFER = Pipes.getTiming("## transfer", timingsMove);
+        TIMINGS_MOVE_FILTER_AMOUNT = Pipes.getTiming("## filter_amount", timingsMove);
     }
 
     /**
@@ -240,7 +240,7 @@ public class ItemMoveScheduler {
     private boolean moveItem(PipeInput input, Inventory inputInventory, Pipe pipe, ItemStack itemStack, boolean spread, boolean forceEqualSpread, boolean overflow) {
         Map<PipeOutput, PipeOutput.AcceptResult> outputs = new LinkedHashMap<>();
         int filterCount = 0;
-        try (Timing t = TIMINGS_MOVE_FILTER.startTiming()) {
+        try (MCTiming t = TIMINGS_MOVE_FILTER.startTiming()) {
             for (PipeOutput output : pipe.getOutputs().values()) {
                 PipeOutput.AcceptResult acceptResult = output.accepts(input, itemStack);
                 if (!spread || acceptResult.getType() == PipeOutput.ResultType.ACCEPT) {
@@ -272,7 +272,7 @@ public class ItemMoveScheduler {
             spreadAmount = (int) Math.ceil(itemStack.getAmount() / (double) spreadOver);
         }
 
-        try (Timing t = TIMINGS_MOVE_TRANSFER.startTiming()) {
+        try (MCTiming t = TIMINGS_MOVE_TRANSFER.startTiming()) {
             // loop through all outputs
             for (Map.Entry<PipeOutput, PipeOutput.AcceptResult> entry : outputs.entrySet()) {
                 // we don't need to move empty/already moved itemstacks
@@ -319,7 +319,7 @@ public class ItemMoveScheduler {
                         && output.getOption(PipeOutput.Options.WHITELIST)
                         && output.getOption(PipeOutput.Options.TARGET_AMOUNT)) {
                     int amountInTarget = 0;
-                    try (Timing t2 = TIMINGS_MOVE_FILTER_AMOUNT.startTiming()) {
+                    try (MCTiming t2 = TIMINGS_MOVE_FILTER_AMOUNT.startTiming()) {
                         for (ItemStack item : targetInventory) {
                             if (output.matchesFilter(acceptResult.getFilterItem(), item)) {
                                 amountInTarget += item.getAmount();
@@ -392,7 +392,8 @@ public class ItemMoveScheduler {
                         case SMOKER:
                         case BLAST_FURNACE:
                             // try to put coal etc in the correct place
-                            if (transferring.getType().isFuel() && (smartInsert || (output.getFacing() != BlockFace.DOWN && output.getFacing() != BlockFace.UP))) {
+                            // lava buckets are not seen as fuel by spigot, therefore we have to manually check for it
+                            if ((transferring.getType().isFuel() || transferring.getType().equals(Material.LAVA_BUCKET)) && (smartInsert || (output.getFacing() != BlockFace.DOWN && output.getFacing() != BlockFace.UP))) {
                                 PipesUtil.addFuel(inputInventory, targetInventory, transferring);
                             } else if (smartInsert || output.getFacing() == BlockFace.DOWN) {
                                 FurnaceInventory furnaceInventory = (FurnaceInventory) targetInventory;
@@ -493,12 +494,24 @@ public class ItemMoveScheduler {
                     BEGIN SHULKER_BOX
                      */
                         case SHULKER_BOX:
-                            if (Tag.SHULKER_BOXES.isTagged(transferring.getType())) {
+                            if (!Tag.SHULKER_BOXES.isTagged(transferring.getType())) {
                                 // Don't allow shulker boxes inside shulker boxes
-                                break;
+                                PipesUtil.addItem(targetInventory, transferring);
                             }
+                            break;
                     /*
                     END SHULKER_BOX
+                     */
+                    /*
+                    BEGIN CRAFTER
+                     */
+                        case CRAFTER:
+                            if (targetHolder instanceof Crafter crafter) {
+                                PipesUtil.addCrafterItem(crafter, targetInventory, transferring);
+                            }
+                            break;
+                    /*
+                    END CRAFTER
                      */
                     /*
                     BEGIN DEFAULT
@@ -513,7 +526,7 @@ public class ItemMoveScheduler {
                     }
                 } else if (targetBlock.getType() == Material.COMPOSTER
                         && (output.getFacing() == BlockFace.DOWN || output.getOption(PipeOutput.Options.SMART_INSERT))) {
-                    double itemChance = PipesUtil.getCompostableChance(itemStack.getType());
+                    double itemChance = itemStack.getType().isCompostable() ? itemStack.getType().getCompostChance() : 0;
                     if (itemChance > 0) {
                         Levelled composter = (Levelled) targetBlock.getBlockData();
                         int layersToFill = composter.getMaximumLevel() - composter.getLevel();
